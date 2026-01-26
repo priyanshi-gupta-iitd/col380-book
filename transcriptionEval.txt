@@ -1,0 +1,29 @@
+1) Accuracy: 
+    • Correct words, meaning, and technical intent preserved.
+    • No missing key claims.
+    • Numbers, symbols, variable names, code tokens, and terminology are correct.
+    
+2) Completeness and coverage
+    • Entire assigned segment transcribed.
+    • Important asides captured when they affect understanding (assumptions, exceptions, such as “common pitfall”, etc.).
+   
+3) Technical correctness of notation and math
+   • Explanations are added as necessary
+
+4) Code and command transcription quality
+    • Code blocks are exact and runnable (when intended).
+    • Correct indentation, punctuation, with syntax highlighting include headers, pragmas, MPI/OpenMP calls.
+    • Commands and flags accurate (-O3 vs -03, mpicc vs mpic).
+
+5) Structure and readability for a book manuscript: you aren’t writing the book, but your output should be “editor-ready.”
+    • Clear paragraphs; appropriate line breaks.
+    • Headings inserted where obvious (topic shifts), without rewriting content.
+    • Lists formatted consistently.
+    • Speaker disfluencies handled per policy (see below).
+
+6) Reference alignment (slides/board/figures)
+    • Marks transitions appropriately in the content (either as a para, subsection or section)
+    • figures are introduced as necessary
+    • Notes are added where a figure is required for comprehension
+    • hyper-refs and citations are added as necessary
+    
