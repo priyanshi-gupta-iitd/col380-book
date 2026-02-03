@@ -1,0 +1,575 @@
+\chapter{Parallelism in Software}
+
+\section*{Key Learning Outcomes}
+\begin{itemize}
+    \item Analyze parallel algorithms using complexity theory
+    \item Implement data parallelism using OpenMP pragmas
+    \item Recognize limitations of parallel speedup due to critical paths
+\end{itemize}
+
+\section{Recap}
+
+\subsection{Parallelism in Hardware}
+In the previous chapter, we ended at the introduction of the key abstractions used by operating systems and runtimes to express concurrency: \emph{processes} and \emph{threads}.
+\begin{ppnote}: \ppterm{Process vs Thread }
+\newline \textbf{Process} : heavyweight unit with its own address space 
+\newline \textbf{Thread} : lightweight unit sharing the process address space 
+Processes have their own isolated memory while threads under a process share the memory of process.
+\end{ppnote}
+\begin{itemize}
+    \item Parallel computation does not occur in isolation; it represents the concurrent execution of multiple subtasks derived from a single program. These subtasks are typically mapped onto threads that execute simultaneously on different processor cores.
+    \item Coordination among threads is achieved primarily through shared memory (by reading from and writing to common memory locations).
+    \item In multicore systems, shared memory values may be replicated across multiple private caches (per-core L1 and L2 caches), as well as stored in shared caches or main memory.
+    \item Cache coherence protocols ensure value-level consistency by propagating updates or invalidations among caches so that all cores observe a coherent view of memory.
+    \item Even with coherence, concurrent memory accesses can lead to race conditions unless higher-level synchronization mechanisms are used. Therefore, correct parallel program execution relies on the combined guarantees provided by hardware coherence mechanisms and software-level synchronization primitives such as locks, atomic operations, and barriers.
+\end{itemize}
+
+\section{Software Parallelism}
+In software systems, parallelism is achieved by designing programs that can execute multiple tasks simultaneously.
+
+\subsection{What are Parallel Programs?}
+They are a collection of computation blocks written as a single program but with different regions (A part of a code that produces an instruction stream that can be mapped to a physical core).
+
+\subsection{Models of Parallelism}
+\begin{itemize}
+    \item \textbf{SIMD} (Single Instruction Multiple Data): A single instruction gets executed across different cores of a multiprocessor or of a processor on different data.\\
+    It is also referred to as data-parallelism.
+    \item \textbf{MIMD} (Multiple Instruction Multiple Data): Multiple operations occur simultaneously on different cores on different subsets of input data sets.\\
+    It is also called task-parallelism.
+\end{itemize}
+
+\subsection{Models of Communication}
+In operating systems, IPC (Inter-Process Communication) refers to mechanisms that allow processes to communicate and synchronize their actions. Common IPC methods include:
+
+\begin{itemize}
+    \item \textbf{Shared Memory}: Processes access common memory regions. This is the fastest IPC method but requires careful synchronization to avoid race conditions. In the context of multi-core systems, shared memory enables threads within the same process to communicate efficiently by reading/writing to shared variables.
+    \item \textbf{Message Passing}: In message passing, processes exchange messages through channels or queues. This method avoids shared state but incurs copying overhead. This method is fundamental to distributed memory parallel programming models like MPI (Message Passing Interface).
+\end{itemize}
+\begin{ppnote}: \ppterm{Synchronization Primitives}\\
+        \textbf{Pipes}: Unidirectional channels connecting processes \\
+        \textbf{Mutexes}: Mutual exclusion locks protecting critical sections\\
+        \textbf{Semaphores}: Variables to control access to shared resources
+\end{ppnote}
+
+\section{Introduction to OpenMP}
+OpenMP is a widely used programming interface for shared-memory parallelism. It allows programmers to parallelize sections of code using simple compiler directives. In this section, we demonstrate how OpenMP can be used to parallelize a computationally intensive loop and analyze its performance benefits.
+
+\begin{ppexample}: Consider a program that performs a large number of independent computations. Each element of an input array is processed using a computationally expensive function, and the result is stored in an output array. The goal is to compare the execution time of the sequential implementation and the parallel implementation using OpenMP.
+\end{ppexample}
+
+\begin{ppprogram}{OpenMP Parallel Computation}{prog:omp-transcendental}
+\begin{lstlisting}[language=C]
+#include <omp.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+
+double compute_transcendental(double x) {
+    double result = 0.0;
+    for (int k = 0; k < 50; k++) {
+        result += sin(x * k) * cos(x * k) / (1.0 + x * k);
+    }
+    return result;
+}
+
+int main() {
+    const int n = 1000000;
+    double *inputs = (double*)malloc(n * sizeof(double));
+    double *outputs = (double*)malloc(n * sizeof(double));
+    
+    if (!inputs || !outputs) {
+        fprintf(stderr, "Memory allocation failed\n");
+        return 1;
+    }
+    
+    // Initialize input array
+    for (int i = 0; i < n; i++) {
+        inputs[i] = (double)i / n;
+    }
+    
+    // Sequential computation
+    double start_seq = omp_get_wtime();
+    for (int i = 0; i < n; i++) {
+        outputs[i] = compute_transcendental(inputs[i]);
+    }
+    double end_seq = omp_get_wtime();
+    
+    // Parallel computation
+    double start_par = omp_get_wtime();
+    #pragma omp parallel for
+    for (int i = 0; i < n; i++) {
+        outputs[i] = compute_transcendental(inputs[i]);
+    }
+    double end_par = omp_get_wtime();
+    
+    printf("Sequential time: %.4f seconds\n", end_seq - start_seq);
+    printf("Parallel time: %.4f seconds\n", end_par - start_par);
+    printf("Speedup: %.2fx\n", (end_seq-start_seq)/(end_par-start_par));
+    
+    free(inputs);
+    free(outputs);
+    return 0;
+}
+\end{lstlisting}
+\end{ppprogram}
+\begin{itemize}
+    \item The program under consideration performs repeated numerical computations on a large data array. \verb|compute_transcendental| function is defined to carry out a sequence of transcendental operations, such as sine, cosine, and square root, over multiple iterations.
+    \item Two arrays are dynamically allocated in heap memory using standard memory allocation routines: one array stores the input values, while the other stores the computed results. The input array is initialized such that each element is proportional to its index value.
+    \item In the sequential version of the program, a loop iterates over all elements of the input array. During each iteration, the computational function is applied to one element, and the result is stored in the output array. The execution time is measured using the OpenMP wall-clock timing function \ppinline{omp\_get\_wtime()}. A time stamp is taken immediately before the loop begins and another after it finishes. The difference between these two values represents the sequential execution time.
+    \item To parallelize the computation, the OpenMP compiler directive \ppinline{omp parallel for} is placed immediately before the loop, which instructs the compiler to distribute the iterations of the loop among multiple threads. Each thread executes a subset of the iterations independently. Since each iteration reads from and writes to distinct locations, no synchronization is required between threads. The parallel execution time is measured in the same manner as the sequential execution (using wall-clock time snapshots). Correct parallel execution requires that loop iterations be independent. If the computation were modified so that each iteration depended on the result of a previous iteration, parallel execution would no longer be valid. Such dependencies introduce serialization and prevent safe parallelization.
+    \item The program is compiled with \ppinline{-fopenmp} flag to enable OpenMP directives and link the runtime library. During execution, the program reports the sequential execution time, the parallel execution time, and the corresponding speedup.
+    \item By default, OpenMP selects a number of threads based on the available hardware resources. This default behavior can be overridden by specifying the desired number of threads through compiler directives or environment variables. Using more threads than the hardware can efficiently support results in frequent context switching and reduced performance. Therefore, optimal performance requires matching the thread count to the system’s architectural capabilities. 
+    \item Experiments show that the parallel implementation significantly reduces execution time compared to the sequential version. However, the speedup is limited by the following factors:
+    \begin{enumerate}
+        \item Thread management overhead
+        \item Memory access patterns
+        \item Available hardware parallelism
+    \end{enumerate}
+    This example demonstrates that OpenMP enables efficient data parallelism with minimal changes to sequential programs. By inserting a single compiler directive, a compute-intensive loop can be parallelized when iteration independence is ensured.
+\end{itemize}
+
+\begin{ppnote}: Modern compilers perform aggressive optimizations that remove computations whose results are never used. If the output array is not accessed after computation, the compiler may identify the loop as redundant and eliminate it entirely. To prevent this, the program includes a simple verification step that reads and prints one of the computed output values. This ensures that the compiler preserves the computation during optimization.
+\end{ppnote}
+
+\subsection{Using \ppinline{omp parallel for} correctly}
+We use \ppinline{omp\_get\_wtime()} from \ppinline{omp.h} to measure execution time. The \ppinline{omp parallel for} directive parallelizes the following loop by distributing iterations across available threads.
+
+\begin{ppkey}
+: The \ppinline{omp parallel for} directive requires independent loop iterations. OpenMP does not guarantee execution order, so dependencies between iterations will produce incorrect results.
+\end{ppkey}
+\paragraph{Hyperthreading}: A core maintains multiple architectural states (registers, program counters) while sharing execution units. When one thread stalls (e.g., cache miss), another uses idle units. Oversubscribing threads beyond hardware capacity causes context switching overhead, pipeline disruption, and cache pollution.
+
+\begin{ppnote}
+: \ppterm{ Superscalar vs Hyperthreading}\\Superscalar processors issue multiple instructions from one thread per cycle (instruction-level parallelism). Hyperthreading allows multiple threads to share execution units (thread-level parallelism).
+\end{ppnote}
+
+\section{Concurrency Errors}
+
+\subsection{Data Races}
+A data race occurs when:
+\begin{itemize}
+  \item Two or more threads access the same memory location
+  \item At least one access is a write
+  \item No synchronization enforces ordering
+\end{itemize}
+Data races result in silent memory corruption.
+They are hard to spot, because:
+\begin{itemize}
+    \item They allow compilation.
+    \item Their results remain unpredictable.
+    \item Their behaviour may change across runs.
+\end{itemize}
+
+\subsection{Atomicity violations}
+\textbf{Atomicity: } An operation or block of code executing as a single, indivisible unit. This ensures all dependencies of the code block to get executed as planned by the author.\\
+
+\begin{ppprogram}{Example for atomicity violation}{prog:atomic_viol}
+\begin{lstlisting}[language=C]
+int x = 0;
+#pragma omp parallel num_threads(2)
+{
+    int tid = omp_get_thread_num();
+    if (tid == 0) {
+        x = 1;
+        for (volatile int i=0; i < 1e8; i++);
+        printf("x = %d\n", x);
+    }
+    if (tid == 1) {
+        for (volatile int i=0; i < 5e7; i++);
+        x = 2;
+    }
+}
+//Output: x = 2
+\end{lstlisting}
+\end{ppprogram}
+
+In the example above, the following happens:
+\begin{itemize}
+    \item Two threads are spawned and run in parallel.
+    \item Thread 0 writes \texttt{1} to \texttt{x}. Then it executes an empty loop (spin) (to allow the violation to get realised), after which it reads back from \texttt{x}.
+    \item Thread 1 runs a small loop to allow the write from thread 0, and then writes \texttt{2} to the same address(\texttt{x}).
+    \item The following chronology is followed:\\
+    $ Thread\_0 (W\space1) \Rightarrow Thread\_1(W\space2) \Rightarrow Thread\_0(R\space\space2)$
+    \item Thread 0 expects to read \texttt{1}, since it had written that to \texttt{x}. But since the entire execution of thread 0 did not occur together (atomically), the data got changed by the other thread.
+\end{itemize}
+This is a classic demonstration of an atomicity violation.
+
+\subsection*{Solution: Locks}
+Locks solve atomicity violations by ensuring that a critical sequence of operations executes exclusively. When a thread acquires a lock, no other thread can enter the protected region until the lock is released.
+\begin{ppprogram}{Locks}{prog:locks}
+    \begin{lstlisting}[language=C]
+int x = 0;
+omp_lock_t lock;
+omp_init_lock(&lock);
+#pragma omp parallel num_threads(2)
+{
+    int tid = omp_get_thread_num();
+    if (tid == 0) {
+        omp_set_lock(&lock);
+        x = 1;
+        for (volatile int i = 0; i < 100000000; i++);
+        printf("x = %d\n", x);
+        omp_unset_lock(&lock);
+    }
+    if (tid == 1) {
+        for (volatile int i = 0; i < 50000000; i++);
+        omp_set_lock(&lock);
+        x = 2;
+        omp_unset_lock(&lock);
+    }
+}
+omp_destroy_lock(&lock);
+//Output: x = 1 
+\end{lstlisting}
+\end{ppprogram}
+In this corrected version, each thread needs to acquire a lock (based on the lock variable \texttt{lock}). So thread 1 is able to run its code block only when thread 0 does not have the lock's access. This prevents it from changing the value at \texttt{x} before thread 0 can read it back.
+
+\section{Data Parallelism in Action}
+\begin{ppexample}: \ppterm{Parallel Summation Algorithm}\\Given an array of $n$ elements and $p$ processors, compute the sum of all elements efficiently.
+\end{ppexample}
+
+\subsection{Steps:}
+\begin{enumerate}
+    \item \textbf{Data Partitioning}: Divide the array into $p$ chunks of size $\lceil n/p \rceil$ each
+    \item \textbf{Local Summation}: Each processor computes the sum of its local chunk
+    \item \textbf{Global Reduction}: Combine partial sums hierarchically using a tree structure
+\end{enumerate}
+
+\begin{ppprogram}{Parallel Summation Algorithm}{prog:parallel-sum}
+\begin{lstlisting}[language=C]
+// Pseudocode for parallel summation
+1. Divide array A[0..n-1] into p chunks of size n/p
+2. For each processor i in parallel:
+       local_sum[i] = sum(A[(i-1)*(n/p) .. i*(n/p)-1])
+3. For level = 1 to $\log_2 (p):
+       For each active processor j in parallel:
+           if (j % 2^level == 0):
+               receive sum from processor j + 2^(level-1)
+               local_sum[j] += received_sum
+4. Final sum in local_sum[0]
+\end{lstlisting}
+\end{ppprogram}
+
+\subsection{Complexity Analysis}
+Let $T(n, p)$ be the time complexity with $n$ elements and $p$ processors.
+\textbf{Phase 1: Local Summation}
+\begin{itemize}
+    \item Each processor $i$ gets a contiguous chunk of the array: $A[(i-1) \cdot \frac{n}{p} \ldots i \cdot \frac{n}{p} - 1]$
+    \item The size of each chunk is exactly $\frac{n}{p}$ elements (assuming $n$ is divisible by $p$ for simplicity)
+    \item Summing $\frac{n}{p}$ elements requires $\frac{n}{p} - 1$ addition operations
+    \item Since all $p$ processors work in parallel, the time for this phase is determined by the slowest processor, which processes $\frac{n}{p}$ elements
+    \item Therefore, $T_1(n, p) = \Theta\left(\frac{n}{p}\right)$
+\end{itemize}
+\textbf{Phase 2: Tree Reduction}
+\begin{itemize}
+    \item After local summation, we have $p$ partial sums:\\ $local\_sum[0],\space local\_sum[1],\space \ldots, local\_sum[p-1]$
+    \item We organize the processors in a binary tree structure for hierarchical reduction:
+    \begin{itemize}
+        \item Level 1: Processors $0, 2, 4, \ldots$ receive sums from processors $1, 3, 5, \ldots$ respectively
+        \item Level 2: Processors $0, 4, 8, \ldots$ receive sums from processors $2, 6, 10, \ldots$ respectively
+        \item This pattern continues until we reach the root at processor 0
+    \end{itemize}
+    \item The height of a complete binary tree with $p$ leaves is $\lceil \log_2 p \rceil$
+    \item At each level $l$ (where $l = 1, 2, \ldots, \lceil \log_2 p \rceil$):
+    \begin{itemize}
+        \item Number of active processors at level $l$: $\frac{p}{2^l}$
+        \item Each active processor performs exactly 1 addition operation
+        \item All processors at the same level work in parallel
+    \end{itemize}
+    \item Therefore, the time for level $l$ is constant: $O(1)$
+    \item Total time for tree reduction:\\ $T_2(p) = \sum_{l=1}^{\lceil \log_2 p \rceil} O(1) = \Theta(\log p)$
+\end{itemize}
+\textbf{Total Time:}
+\[
+T(n, p) = T_1(n, p) + T_2(p) = \Theta\left(\frac{n}{p}\right) + \Theta(\log p) = \Theta\left(\frac{n}{p} + \log p\right)
+\]
+\textbf{Mathematical Verification of Tree Height:}
+\begin{itemize}
+    \item At level 0 (leaves): $p$ processors
+    \item At level 1: $\frac{p}{2}$ processors
+    \item At level 2: $\frac{p}{4}$ processors
+    \item ...
+    \item At level $h$: $\frac{p}{2^h}$ processors
+    \item The process stops when $\frac{p}{2^h} = 1$ (only root remains)
+    \item Solving: $2^h = p \Rightarrow h = \log_2 p$
+    \item Since $h$ must be an integer, we have $h = \lceil \log_2 p \rceil$
+\end{itemize}
+\textbf{Work and Span Analysis:}
+\begin{itemize}
+    \item \textbf{Total Work (W)}: The total number of operations performed by all processors
+    \[
+    W = \underbrace{p \cdot \frac{n}{p}}_{\text{Phase 1}} + \underbrace{(p-1)}_{\text{Phase 2}} = n + (p-1) = \Theta(n + p)
+    \]
+    \item \textbf{Critical Path (D)}: The longest sequence of dependent operations (span)
+    \[
+    D = \underbrace{\frac{n}{p}}_{\text{Phase 1}} + \underbrace{\log_2 p}_{\text{Phase 2}} = \Theta\left(\frac{n}{p} + \log p\right)
+    \]
+    \item \textbf{Parallelism (P)}: The maximum possible speedup
+    \[
+    P = \frac{W}{D} = \frac{n + p}{n/p + \log p}
+    \]
+\end{itemize}
+\textbf{Asymptotic Analysis of Special Cases:}
+\begin{enumerate}
+    \item \textbf{When $p = 1$ (Sequential Case)}:
+    \[
+    T(n, 1) = \Theta\left(\frac{n}{1} + \log 1\right) = \Theta(n + 0) = \Theta(n)
+    \]
+    This matches the sequential algorithm complexity.
+    
+    \item \textbf{When $p = n$ (Massive Parallelism)}:
+    \[
+    T(n, n) = \Theta\left(\frac{n}{n} + \log n\right) = \Theta(1 + \log n) = \Theta(\log n)
+    \]
+    This represents the optimal parallel algorithm where each processor handles 1 element.
+    
+    \item \textbf{When $p \ll n$ (Practical Parallelism)}:
+    \[
+    T(n, p) = \Theta\left(\frac{n}{p} + \log p\right) \approx \Theta\left(\frac{n}{p}\right)
+    \]
+    The $\log p$ term becomes negligible compared to $n/p$, giving near-linear speedup.
+    
+    \item \textbf{When $p > n$ (Over-subscription)}:
+    \[
+    T(n, p) = \Theta\left(\frac{n}{p} + \log p\right) = \Theta(\log p)
+    \]
+    The first term becomes negligible, but we cannot achieve better than $\Theta(\log n)$ due to the critical path limitation.
+\end{enumerate}
+\textbf{Speedup Analysis:}
+\begin{itemize}
+    \item \textbf{Sequential time}: $T_s = \Theta(n)$
+    \item \textbf{Parallel time}: $T_p = \Theta\left(\frac{n}{p} + \log p\right)$
+    \item \textbf{Speedup}: 
+    \[
+    S_p = \frac{T_s}{T_p} = \frac{n}{n/p + \log p} = \frac{p}{1 + \frac{p \log p}{n}}
+    \]
+    \item \textbf{Efficiency}:
+    \[
+    E_p = \frac{S_p}{p} = \frac{1}{1 + \frac{p \log p}{n}}
+    \]
+    \item \textbf{For optimal efficiency}, we need $\frac{p \log p}{n} \ll 1$, which implies $p \ll \frac{n}{\log n}$
+\end{itemize}
+\textbf{Proof of Optimality:}
+The $\log p$ term in the complexity represents the \emph{critical path} or \emph{depth} of the computation. Any reduction operation on $p$ values must have depth at least $\log_2 p$ in the circuit model, making this algorithm optimal within constant factors for the summation problem.
+
+\textbf{Memory Complexity Analysis:}
+\begin{itemize}
+    \item \textbf{Space per processor}: $O\left(\frac{n}{p}\right)$ for local chunk storage
+    \item \textbf{Total space}: $O(n)$ (same as sequential)
+    \item \textbf{Communication cost} (in distributed memory): Each processor sends/receives $\log_2 p$ messages of size $O(1)$
+\end{itemize}
+\section{Exercises}
+\ppexercise{Analyze the memory hierarchy effects on the parallel summation algorithm. How does cache size affect optimal chunk size?}
+\ppexercise{Implement a parallel version of the transcendental function computation that uses vectorization (SIMD) in addition to thread-level parallelism.}
+\ppexercise{ \ppterm{Memory Visibility and Cache Coherence}\\
+  (a) Explain the difference between \emph{write-through} and \emph{write-back} caches and how each interacts with coherence protocols.\\
+  (b) Describe a race condition that can still occur despite hardware cache coherence, and explain what software primitives are needed to avoid it.
+  }
+\ppexercise{\ppterm{Simple Race Example and Fix}\\
+Given the following two-thread pseudo-C:}
+\begin{ppprogram}{}{}
+\begin{lstlisting}
+    int flag = 0;
+    int data = 0;
+    
+    /* Thread A */
+    data = 42;
+    flag = 1;
+    
+    /* Thread B */
+    if (flag == 1) print(data);
+\end{lstlisting}
+\end{ppprogram}
+(a) Explain why this program exhibits a race or visibility problem even on a cache-coherent machine.\\
+(b) Show a correct fix using either (i) a lock or (ii) an atomic with appropriate memory ordering (describe which ordering you choose).
+  
+\ppexercise{How is a data race different from an atomicity violation?}
+
+\ppexercise{A shared variable \texttt{counter} is initialized to 0. Two threads, T1 and T2, execute in parallel:}
+  \begin{ppprogram}{}{}
+  \begin{lstlisting}
+    T1:temp = counter; temp = temp + 1; counter = temp;
+    T2:temp = counter; temp = temp + 1; counter = temp;
+\end{lstlisting}
+  \end{ppprogram} 
+If both threads run without locks or atomic operations, what are the possible final values of \texttt{counter}? Explain the possibilities.
+
+    \ppexercise{Is it sufficient for iterations to be write-disjoint to safely parallelise a loop? Justify your answer.}
+
+
+
+\section{Solutions to Exercises}
+\begin{enumerate}
+    \item
+
+\begin{itemize}
+    \item \textbf{Principle:} Each thread should process a contiguous chunk of the array so its working set fits in cache, reducing cache misses and exploiting spatial and temporal locality.
+    
+    \item \textbf{Cache-residency condition:} Let \(C\) be the cache size available per thread (in bytes) and \(S\) be the size of one array element. For a chunk size \(m = n/p\),
+    \[
+        m \le \frac{C}{S}
+    \]
+    ensures that the chunk fits entirely in cache.
+    
+    \item \textbf{Cache-line alignment:} To avoid false sharing, chunk boundaries should be aligned to cache-line boundaries (typically 64 bytes), and \(m\) should be a multiple of the cache-line size divided by \(S\).
+    
+    \item \textbf{Shared LLC effect:} When threads share a last-level cache (LLC), the combined working set of all threads should not exceed the LLC capacity; otherwise cache thrashing occurs.
+    
+    \item \textbf{Trade-off:} Very large chunks cause capacity misses, while very small chunks increase synchronization and scheduling overhead. Hence, the optimal chunk size balances parallelism and cache efficiency.
+\end{itemize}
+
+\item The chapter demonstrated a parallel version using OpenMP's \texttt{\#pragma omp parallel for}. To additionally exploit SIMD (Single Instruction Multiple Data), OpenMP's \texttt{simd} clause is used so that multiple loop iterations are executed simultaneously using vector instructions within each thread.
+
+\begin{ppprogram}{}{}
+    \begin{lstlisting}
+#include <omp.h>
+#include <math.h>
+#include <stdlib.h>
+
+double heavy(double x) {
+    double r = 0.0;
+    for (int i = 0; i < 50; ++i)
+        r += sin(x)*cos(x)*tan(x)*log(x+1.0)*exp(-x);
+    return r;
+}
+
+int main() {
+    int n = 1000000;
+    double *A = malloc(n * sizeof(double));
+    double *B = malloc(n * sizeof(double));
+
+    for (int i = 0; i < n; ++i)
+        A[i] = 0.001 * i;
+
+    #pragma omp parallel for simd
+    for (int i = 0; i < n; ++i)
+        B[i] = heavy(A[i]);
+
+    free(A); free(B);
+    return 0;
+}
+\end{lstlisting}
+\end{ppprogram}
+
+\begin{itemize}
+    \item \texttt{parallel for} distributes iterations across threads.
+    \item \texttt{simd} enables vector execution of multiple iterations per instruction.
+\end{itemize}
+
+\item \textbf{(a) Write-through vs Write-back caches}
+
+\begin{itemize}
+  \item \emph{Write-through cache:}
+  In a write-through cache, every write updates both the cache and the next level of memory (typically main memory) immediately. This ensures that memory always holds the most recent value.
+
+  \item \emph{Write-back cache:}
+  In a write-back cache, a write updates only the cache and marks the cache line as \emph{dirty}. The modified data is written back to memory only when the cache line is evicted.
+\end{itemize}
+
+\medskip
+
+\textbf{(b) Race condition despite cache coherence}
+
+
+\begin{itemize}
+  \item \emph{Example race condition (lost update):}
+  Two threads concurrently execute \texttt{x = x + 1} on a shared variable \texttt{x}. Each thread may read the same old value, increment it, and store it back, resulting in one increment being lost. This can occur even though the caches are coherent.
+
+  \item \emph{Required software primitives:}
+  To avoid such race conditions, software must use atomic read-modify-write operations (e.g., \texttt{fetch-and-add} or \texttt{compare-and-swap}) or mutual exclusion mechanisms such as locks or mutexes.
+
+  \item \emph{Visibility and ordering:}
+  Another race arises when one thread writes data and then sets a flag, while another thread waits on the flag before reading the data. Without proper memory ordering guarantees, the flag may become visible before the data.
+  This requires memory barriers or acquire--release semantics on atomic variables to enforce correct ordering.
+\end{itemize}
+
+ \item\textbf{(a) Why this is a race}
+
+This program exhibits a \emph{data race / visibility (reordering) problem}. Hardware cache coherence only guarantees per-location consistency; it does not guarantee the order in which writes to different memory locations become visible on other processors. Because of store buffering and possible reordering, \texttt{flag = 1} can become visible to Thread B before \texttt{data = 42} is made visible, so B may read a stale value of \texttt{data}.
+
+\medskip
+
+\textbf{(b) Correct fixes}
+
+\textbf{(i) Lock-based fix:}
+Use a mutex to protect the write/read pair so the update and the observation are atomic with respect to each other.
+\begin{ppprogram}{}{}
+\begin{lstlisting}
+/* pseudo-C using pthreads */
+pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+
+/* Thread A */
+pthread_mutex_lock(&m);
+data = 42;
+flag = 1;
+pthread_mutex_unlock(&m);
+
+/* Thread B */
+pthread_mutex_lock(&m);
+if (flag == 1) print(data);
+pthread_mutex_unlock(&m);
+\end{lstlisting}    
+\end{ppprogram}
+
+A mutex provides mutual exclusion and the required memory ordering: once Thread B holds the mutex and sees \texttt{flag==1} it is guaranteed to see the write \texttt{data=42} performed under the mutex.
+
+\medskip
+
+\textbf{(ii) Atomic release/acquire fix (C11):}
+Make \texttt{flag} atomic and use a release store in the producer and an acquire load in the consumer.
+\begin{ppprogram}{}{}
+    \begin{lstlisting}
+#include <stdatomic.h>
+
+atomic_int flag = ATOMIC_VAR_INIT(0);
+int data = 0;
+
+/* Thread A (producer) */
+data = 42;
+atomic_store_explicit(&flag, 1, memory_order_release);
+
+/* Thread B (consumer) */
+if (atomic_load_explicit(&flag, memory_order_acquire)) 
+{
+    print(data);
+}
+\end{lstlisting}
+\end{ppprogram}
+The release store on \texttt{flag} synchronizes with the acquire load performed by Thread B; this guarantees that the write to \texttt{data} that happens before the release is visible to the thread that performs the acquire.
+
+\medskip
+
+
+    \item
+        \begin{itemize}
+            \item \textbf{Data Race:} Two or more threads access the same variable concurrently, with at least one write, \emph{without synchronization}.
+            \item \textbf{Atomicity Violation:} A thread's multi-step operation is interleaved, so it sees partial results.
+        \end{itemize}
+        
+        \textbf{Relation:} All atomicity violations are data races, but not all data races are atomicity violations.
+        
+        \[
+        \text{Atomicity Violation} \subseteq \text{Data Race}
+        \]
+    \item The possible final values for the shared variable \texttt{counter} are:
+        \begin{itemize}
+            \item \textbf{1:} when both threads read the initial value 0 before either writes. One update overwrites the other due to interleaving.
+            \item \textbf{2:} when one thread completes its read–modify–write sequence before the other starts. No interleaving occurs.
+        \end{itemize}
+    \item No, write-disjointness alone is not sufficient to safely parallelise a loop. Write-disjointness means that different iterations of the loop write to different memory locations, so there are no write--write conflicts. However, read-write dependencies between iterations can still exist. Since \texttt{omp parallel for} does not guarantee any execution order, such dependencies can lead to incorrect results. Therefore, loop iterations must be fully independent, not merely write-disjoint, for safe parallelisation.
+
+\end{enumerate}
+
+\section*{References}
+For a deeper understanding of the topics discussed in this chapter, readers are encouraged to refer to Sections 1.1 to 1.4 of S Kumar~\cite{kumar2014} and Chapter 5 of P Pacheco~\cite{pacheco2011}.
+\section*{Contributions}
+\subsection*{Sandeep Kumar (2023CS10166)}
+Section 3.1 
+\subsection*{Anjalee Nayak (2023CS10638)}
+Section 3.2 and 3.5
+\subsection*{Priyanshi Gupta (2023CS10106)}
+Section 3.3 till Subsection 3.3.1
+\subsection*{Eshita Zjigyasu (2023CS51215)}
+Subsection 3.3.1
+\subsection*{Adit Jindal (2023CS50626)}
+Section 3.4
